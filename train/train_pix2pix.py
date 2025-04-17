@@ -12,7 +12,7 @@ from tqdm import tqdm
 import time
 
 BATCH_SIZE = 2
-EPOCHS = 1
+EPOCHS = 100
 DEVICE = 'mps' if hasattr(torch, 'has_mps') and torch.backends.mps.is_available() else ('cuda' if torch.cuda.is_available() else 'cpu')
 DATA_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'Dataset')
 

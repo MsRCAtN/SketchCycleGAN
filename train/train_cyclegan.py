@@ -13,8 +13,8 @@ import time
 
 # 配置
 BATCH_SIZE = 2
-EPOCHS = 1
-DEVICE = 'cuda'
+EPOCHS = 100
+DEVICE = 'mps' if hasattr(torch, 'has_mps') and torch.backends.mps.is_available() else ('cuda' if torch.cuda.is_available() else 'cpu')
 DATA_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'Dataset')
 
 # 简单 transform
@@ -45,7 +45,7 @@ def main():
         RESUME_MODE = True
     else:
         RUN_TIMESTAMP = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'output', RUN_TIMESTAMP)
+        OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'output', 'cyclegan', RUN_TIMESTAMP)
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         LOG_FILE = os.path.join(OUTPUT_DIR, 'train_log.txt')
         CHECKPOINT = os.path.join(OUTPUT_DIR, 'cyclegan_minimal.pth')
