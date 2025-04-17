@@ -14,7 +14,7 @@ import time
 # 配置
 BATCH_SIZE = 2
 EPOCHS = 1
-DEVICE = 'mps' if hasattr(torch, 'has_mps') and torch.backends.mps.is_available() else ('cuda' if torch.cuda.is_available() else 'cpu')
+DEVICE = 'cuda'
 DATA_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'Dataset')
 
 # 简单 transform
