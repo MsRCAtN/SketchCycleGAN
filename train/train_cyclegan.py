@@ -61,6 +61,7 @@ def main():
     optimizer_D = torch.optim.Adam(list(model.D_A.parameters()) + list(model.D_B.parameters()), lr=2e-4, betas=(0.5, 0.999))
     criterion_GAN = torch.nn.MSELoss()
     criterion_cycle = torch.nn.L1Loss()
+    criterion_identity = torch.nn.L1Loss()
 
     # 检查 checkpoint
     start_epoch = 0
@@ -91,7 +92,14 @@ def main():
                 loss_GAN_BA = criterion_GAN(model.D_A(fake_A), valid)
                 loss_cycle_A = criterion_cycle(rec_A, real_A)
                 loss_cycle_B = criterion_cycle(rec_B, real_B)
-                loss_G = loss_GAN_AB + loss_GAN_BA + 10 * (loss_cycle_A + loss_cycle_B)
+                # Identity loss
+                # G_BA(B) ≈ B, G_AB(A) ≈ A
+                identity_A = model.G_BA(real_B)
+                identity_B = model.G_AB(real_A)
+                loss_identity_A = criterion_identity(identity_A, real_B)
+                loss_identity_B = criterion_identity(identity_B, real_A)
+                lambda_id = 0.5
+                loss_G = loss_GAN_AB + loss_GAN_BA + 10 * (loss_cycle_A + loss_cycle_B) + lambda_id * (loss_identity_A + loss_identity_B)
                 optimizer_G.zero_grad()
                 loss_G.backward()
                 optimizer_G.step()
