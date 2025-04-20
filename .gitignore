@@ -9,10 +9,6 @@ venv/
 # Ignore dataset and output directories
 Dataset/
 
-# Ignore model checkpoints and logs
-*.pth
-*.ckpt
-*.log
 
 # Ignore Jupyter notebooks checkpoints
 .ipynb_checkpoints/
