@@ -12,8 +12,20 @@ from tqdm import tqdm
 import time
 
 BATCH_SIZE = 2
-EPOCHS = 100
-DEVICE = 'mps' if hasattr(torch, 'has_mps') and torch.backends.mps.is_available() else ('cuda' if torch.cuda.is_available() else 'cpu')
+EPOCHS = 20
+# 设备选择兼容新版 PyTorch，无警告
+if torch.cuda.is_available():
+    DEVICE = 'cuda'
+elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_built() and torch.backends.mps.is_available():
+    DEVICE = 'mps'
+else:
+    DEVICE = 'cpu'
+if DEVICE == 'cuda':
+    print(f"[INFO] Using device: cuda ({torch.cuda.get_device_name(torch.cuda.current_device())})")
+elif DEVICE == 'mps':
+    print("[INFO] Using device: mps (Apple Silicon GPU)")
+else:
+    print("[INFO] Using device: cpu")
 DATA_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'Dataset')
 
 transform = transforms.Compose([
