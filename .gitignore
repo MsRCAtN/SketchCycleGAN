@@ -8,7 +8,7 @@ venv/
 
 # Ignore dataset and output directories
 Dataset/
-
+*.pth
 
 # Ignore Jupyter notebooks checkpoints
 .ipynb_checkpoints/
