@@ -2,8 +2,10 @@ import sys
 import os
 import datetime
 import argparse
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import torch
+import torch.nn as nn
+import torch.autograd as autograd
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from torch.utils.data import DataLoader
 from torchvision import transforms, utils as vutils
 from models.cyclegan import CycleGAN
@@ -66,6 +68,24 @@ class ImagePool:
                     out.append(img)
         return torch.cat(out, dim=0)
 
+# --- WGAN-GP 损失函数 ---
+def compute_gradient_penalty(D, real_samples, fake_samples, device):
+    alpha = torch.rand(real_samples.size(0), 1, 1, 1, device=device)
+    interpolates = (alpha * real_samples + (1 - alpha) * fake_samples).requires_grad_(True)
+    d_interpolates = D(interpolates)
+    fake = torch.ones_like(d_interpolates, device=device, requires_grad=False)
+    gradients = autograd.grad(
+        outputs=d_interpolates,
+        inputs=interpolates,
+        grad_outputs=fake,
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True
+    )[0]
+    gradients = gradients.view(gradients.size(0), -1)
+    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+    return gradient_penalty
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--resume', type=str, default=None, help='output dir to resume from')
@@ -92,13 +112,31 @@ def main():
         CHECKPOINT = os.path.join(OUTPUT_DIR, 'cyclegan_orig.pth')
         RESUME_MODE = False
 
-    dataset = SketchPhotoDataset(DATA_ROOT, paired=True, transform=transform, sketch_set='tx_000000000000', photo_set='tx_000000000000')
+    # 自动收集所有 sketch/photo set
+    sketch_sets = [
+        'tx_000000000000',
+        'tx_000000000010',
+        'tx_000000000110',
+        'tx_000000001010',
+        'tx_000000001110',
+        'tx_000100000000',
+    ]
+    photo_sets = [
+        'tx_000000000000',
+        'tx_000100000000',
+    ]
+    dataset = SketchPhotoDataset(
+        root_dir='Dataset',
+        paired=True,
+        transform=transform,
+        sketch_sets=sketch_sets,
+        photo_sets=photo_sets
+    )
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
     model = CycleGAN(input_nc=1, output_nc=3).to(DEVICE)
     optimizer_G = torch.optim.Adam(list(model.G_AB.parameters()) + list(model.G_BA.parameters()), lr=0.0001, betas=(0.5, 0.999))
     optimizer_D = torch.optim.Adam(list(model.D_A.parameters()) + list(model.D_B.parameters()), lr=0.0001, betas=(0.5, 0.999))
-    criterion_GAN = torch.nn.MSELoss()
     criterion_cycle = torch.nn.L1Loss()
     criterion_identity = torch.nn.L1Loss()
 
@@ -129,10 +167,10 @@ def main():
                 real_A = batch['sketch'].to(DEVICE)
                 real_B = batch['photo'].to(DEVICE)
                 fake_B, rec_A, fake_A, rec_B = model(real_A, real_B)
-                valid = torch.ones_like(model.D_B(fake_B), device=DEVICE)
-                fake = torch.zeros_like(model.D_B(fake_B), device=DEVICE)
-                loss_GAN_AB = criterion_GAN(model.D_B(fake_B), valid)
-                loss_GAN_BA = criterion_GAN(model.D_A(fake_A), valid)
+
+                # ========== 1. 生成器 loss（WGAN-GP） ==========
+                loss_GAN_AB = -model.D_B(fake_B).mean()
+                loss_GAN_BA = -model.D_A(fake_A).mean()
                 loss_cycle_A = criterion_cycle(rec_A, real_A)
                 loss_cycle_B = criterion_cycle(rec_B, real_B)
                 # Identity loss
@@ -148,29 +186,29 @@ def main():
                 loss_G.backward()
                 optimizer_G.step()
 
-                # 判别器多步训练 + label smoothing + 加噪声
+                # ========== 2. 判别器多步训练（WGAN-GP） ==========
                 n_D_steps = 3
+                lambda_gp = 10
                 for _ in range(n_D_steps):
-                    def add_noise(x, std=0.05):
-                        return x + torch.randn_like(x) * std
-                    real_label = torch.full((real_A.size(0), 1, 30, 30), 0.9, device=DEVICE)
-                    fake_label = torch.zeros_like(real_label)
-                    pred_real_A = model.D_A(add_noise(real_A))
-                    loss_D_A_real = criterion_GAN(pred_real_A, real_label)
+                    # 判别器A
+                    real_validity_A = model.D_A(real_A)
                     fake_A_buffer = fake_A_pool.query(fake_A.detach())
-                    pred_fake_A = model.D_A(add_noise(fake_A_buffer))
-                    loss_D_A_fake = criterion_GAN(pred_fake_A, fake_label)
-                    loss_D_A = (loss_D_A_real + loss_D_A_fake) * 0.5
-                    pred_real_B = model.D_B(add_noise(real_B))
-                    loss_D_B_real = criterion_GAN(pred_real_B, real_label)
-                    fake_B_buffer = fake_B_pool.query(fake_B.detach())
-                    pred_fake_B = model.D_B(add_noise(fake_B_buffer))
-                    loss_D_B_fake = criterion_GAN(pred_fake_B, fake_label)
-                    loss_D_B = (loss_D_B_real + loss_D_B_fake) * 0.5
-                    loss_D = loss_D_A + loss_D_B
+                    fake_validity_A = model.D_A(fake_A_buffer)
+                    gp_A = compute_gradient_penalty(model.D_A, real_A, fake_A_buffer, DEVICE)
+                    loss_D_A = fake_validity_A.mean() - real_validity_A.mean() + lambda_gp * gp_A
                     optimizer_D.zero_grad()
-                    loss_D.backward()
+                    loss_D_A.backward(retain_graph=True)
                     optimizer_D.step()
+                    # 判别器B
+                    real_validity_B = model.D_B(real_B)
+                    fake_B_buffer = fake_B_pool.query(fake_B.detach())
+                    fake_validity_B = model.D_B(fake_B_buffer)
+                    gp_B = compute_gradient_penalty(model.D_B, real_B, fake_B_buffer, DEVICE)
+                    loss_D_B = fake_validity_B.mean() - real_validity_B.mean() + lambda_gp * gp_B
+                    optimizer_D.zero_grad()
+                    loss_D_B.backward(retain_graph=True)
+                    optimizer_D.step()
+                loss_D = loss_D_A + loss_D_B
                 pbar.set_postfix({
                     'Loss_G': f"{loss_G.item():.4f}",
                     'Loss_D': f"{loss_D.item():.4f}"

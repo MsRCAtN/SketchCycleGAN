@@ -1,27 +1,11 @@
 import torch
 import torch.nn as nn
+from models.tps import TPSGeometricTransform
 
-# 这里以几何变形模块为例，实际可用 TPS、STN 或自定义关键点对齐模块
-class GeometricTransform(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        # 占位：可用 Spatial Transformer Network (STN) 或 Thin Plate Spline (TPS) 替换
-        self.localization = nn.Sequential(
-            nn.Conv2d(channels, 8, kernel_size=7),
-            nn.ReLU(True),
-            nn.AdaptiveAvgPool2d(1)
-        )
-        self.fc = nn.Linear(8, 6)  # 仿射变换参数
-        # 初始化为单位变换
-        self.fc.weight.data.zero_()
-        self.fc.bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
-    def forward(self, x):
-        xs = self.localization(x)
-        xs = xs.view(xs.size(0), -1)
-        theta = self.fc(xs).view(-1, 2, 3)
-        grid = nn.functional.affine_grid(theta, x.size(), align_corners=False)
-        x = nn.functional.grid_sample(x, grid, align_corners=False)
-        return x
+# 这里以 TPS 变形模块为例，支持复杂非刚性几何变换
+class GeometricTransform(TPSGeometricTransform):
+    def __init__(self, channels, num_ctrl_pts=16, out_size=(256,256)):
+        super().__init__(channels, num_ctrl_pts=num_ctrl_pts, out_size=out_size)
 
 from models.cyclegan import ResnetGenerator, NLayerDiscriminator
 

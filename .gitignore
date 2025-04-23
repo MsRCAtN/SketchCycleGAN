@@ -19,3 +19,7 @@ Thumbs.db
 
 # Ignore environment files
 .env
+output/
+
+pth/
+*.tar.gz

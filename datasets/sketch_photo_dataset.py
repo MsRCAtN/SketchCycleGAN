@@ -1,43 +1,66 @@
 import os
+import random
 from PIL import Image
 from torch.utils.data import Dataset
 
 class SketchPhotoDataset(Dataset):
-    def __init__(self, root_dir, paired=True, transform=None, sketch_set='tx_000000000000', photo_set='tx_000000000000'):
+    def __init__(self, root_dir, paired=True, transform=None, sketch_sets=None, photo_sets=None):
         super().__init__()
         self.root_dir = root_dir
         self.paired = paired
         self.transform = transform
-        self.sketch_dir = os.path.join(root_dir, 'sketch', sketch_set)
-        self.photo_dir = os.path.join(root_dir, 'photo', photo_set)
-        # 递归收集所有类别下的图片
+        # 支持多个子目录混合采样
+        self.sketch_sets = sketch_sets if sketch_sets is not None else ['tx_000000000000']
+        self.photo_sets = photo_sets if photo_sets is not None else ['tx_000000000000']
+        # 收集所有指定增强目录下的图片
         self.sketch_imgs = []
         self.photo_imgs = []
-        for cls in sorted(os.listdir(self.sketch_dir)):
-            cls_path = os.path.join(self.sketch_dir, cls)
-            if os.path.isdir(cls_path):
-                for img in sorted(os.listdir(cls_path)):
-                    if img.lower().endswith('.png'):
-                        self.sketch_imgs.append(os.path.join(cls_path, img))
-        for cls in sorted(os.listdir(self.photo_dir)):
-            cls_path = os.path.join(self.photo_dir, cls)
-            if os.path.isdir(cls_path):
-                for img in sorted(os.listdir(cls_path)):
-                    if img.lower().endswith('.jpg') or img.lower().endswith('.jpeg') or img.lower().endswith('.png'):
-                        self.photo_imgs.append(os.path.join(cls_path, img))
-        assert len(self.sketch_imgs) > 0 and len(self.photo_imgs) > 0, f"No images found in {self.sketch_dir} or {self.photo_dir}"
+        self.sketch_cls_imgs = []  # [set][cls][img]
+        self.photo_cls_imgs = []
+        for sketch_set in self.sketch_sets:
+            sketch_dir = os.path.join(root_dir, 'sketch', sketch_set)
+            cls_imgs = []
+            for cls in sorted(os.listdir(sketch_dir)):
+                cls_path = os.path.join(sketch_dir, cls)
+                if os.path.isdir(cls_path):
+                    imgs = [os.path.join(cls_path, img) for img in sorted(os.listdir(cls_path)) if img.lower().endswith('.png')]
+                    if imgs:
+                        self.sketch_imgs.extend(imgs)
+                        cls_imgs.append(imgs)
+            self.sketch_cls_imgs.append(cls_imgs)
+        for photo_set in self.photo_sets:
+            photo_dir = os.path.join(root_dir, 'photo', photo_set)
+            cls_imgs = []
+            for cls in sorted(os.listdir(photo_dir)):
+                cls_path = os.path.join(photo_dir, cls)
+                if os.path.isdir(cls_path):
+                    imgs = [os.path.join(cls_path, img) for img in sorted(os.listdir(cls_path)) if img.lower().endswith(('.jpg','.jpeg','.png'))]
+                    if imgs:
+                        self.photo_imgs.extend(imgs)
+                        cls_imgs.append(imgs)
+            self.photo_cls_imgs.append(cls_imgs)
+        assert len(self.sketch_imgs) > 0 and len(self.photo_imgs) > 0, f"No images found in {self.sketch_sets} or {self.photo_sets}"
+        # 用于 __len__
         self.length = min(len(self.sketch_imgs), len(self.photo_imgs))
     def __len__(self):
         return self.length
     def __getitem__(self, idx):
-        sketch_path = self.sketch_imgs[idx % len(self.sketch_imgs)]
+        # 混合采样：每次随机选一个 set，再随机选一个类别和图片
+        sketch_set_idx = random.randint(0, len(self.sketch_sets)-1)
+        photo_set_idx = random.randint(0, len(self.photo_sets)-1)
+        # 随机选类别
+        sketch_cls_imgs = self.sketch_cls_imgs[sketch_set_idx]
+        photo_cls_imgs = self.photo_cls_imgs[photo_set_idx]
+        sketch_cls = random.choice(sketch_cls_imgs)
+        photo_cls = random.choice(photo_cls_imgs)
+        # 随机选图片
+        sketch_path = random.choice(sketch_cls)
         if self.paired:
-            photo_path = self.photo_imgs[idx % len(self.photo_imgs)]
+            photo_path = random.choice(photo_cls)
         else:
-            import random
-            rand_idx = random.randint(0, len(self.photo_imgs) - 1)
-            photo_path = self.photo_imgs[rand_idx]
-        sketch = Image.open(sketch_path).convert('L')  # 单通道
+            # 非配对则完全随机
+            photo_path = random.choice(self.photo_imgs)
+        sketch = Image.open(sketch_path).convert('L')
         photo = Image.open(photo_path).convert('RGB')
         if self.transform:
             sketch = self.transform(sketch)
