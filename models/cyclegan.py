@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-# 定义生成器 U-Net 结构（可根据需要替换为 ResNet）
 class ResnetBlock(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -26,7 +25,6 @@ class ResnetGenerator(nn.Module):
             nn.InstanceNorm2d(ngf),
             nn.ReLU(True)
         ]
-        # 下采样
         n_downsampling = 2
         for i in range(n_downsampling):
             mult = 2 ** i
@@ -35,11 +33,9 @@ class ResnetGenerator(nn.Module):
                 nn.InstanceNorm2d(ngf * mult * 2),
                 nn.ReLU(True)
             ]
-        # ResNet blocks
         mult = 2 ** n_downsampling
         for i in range(n_blocks):
             model += [ResnetBlock(ngf * mult)]
-        # 上采样
         for i in range(n_downsampling):
             mult = 2 ** (n_downsampling - i)
             model += [
@@ -83,7 +79,6 @@ class NLayerDiscriminator(nn.Module):
     def forward(self, x):
         return self.model(x)
 
-# CycleGAN 模型类
 class CycleGAN(nn.Module):
     def __init__(self, input_nc=1, output_nc=3):
         super().__init__()

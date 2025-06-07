@@ -19,8 +19,14 @@ Thumbs.db
 
 # Ignore environment files
 .env
-output/
+# output/
 
 pth/
 *.tar.gz
 mlruns/
+
+inference/
+output/
+sampled_pairs/
+outline.md
+.bak

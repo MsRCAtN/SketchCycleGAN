@@ -9,10 +9,10 @@ class SketchPhotoDataset(Dataset):
         self.root_dir = root_dir
         self.paired = paired
         self.transform = transform
-        # 支持多个子目录混合采样
+        # 
         self.sketch_sets = sketch_sets if sketch_sets is not None else ['tx_000000000000']
         self.photo_sets = photo_sets if photo_sets is not None else ['tx_000000000000']
-        # 收集所有指定增强目录下的图片
+        # 
         self.sketch_imgs = []
         self.photo_imgs = []
         self.sketch_cls_imgs = []  # [set][cls][img]
@@ -40,25 +40,25 @@ class SketchPhotoDataset(Dataset):
                         cls_imgs.append(imgs)
             self.photo_cls_imgs.append(cls_imgs)
         assert len(self.sketch_imgs) > 0 and len(self.photo_imgs) > 0, f"No images found in {self.sketch_sets} or {self.photo_sets}"
-        # 用于 __len__
+        #  __len__
         self.length = min(len(self.sketch_imgs), len(self.photo_imgs))
     def __len__(self):
         return self.length
     def __getitem__(self, idx):
-        # 混合采样：每次随机选一个 set，再随机选一个类别和图片
+        # ： set，
         sketch_set_idx = random.randint(0, len(self.sketch_sets)-1)
         photo_set_idx = random.randint(0, len(self.photo_sets)-1)
-        # 随机选类别
+        # 
         sketch_cls_imgs = self.sketch_cls_imgs[sketch_set_idx]
         photo_cls_imgs = self.photo_cls_imgs[photo_set_idx]
         sketch_cls = random.choice(sketch_cls_imgs)
         photo_cls = random.choice(photo_cls_imgs)
-        # 随机选图片
+        # 
         sketch_path = random.choice(sketch_cls)
         if self.paired:
             photo_path = random.choice(photo_cls)
         else:
-            # 非配对则完全随机
+            # 
             photo_path = random.choice(self.photo_imgs)
         sketch = Image.open(sketch_path).convert('L')
         photo = Image.open(photo_path).convert('RGB')

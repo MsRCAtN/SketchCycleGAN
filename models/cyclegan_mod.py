@@ -1,11 +1,16 @@
 import torch
 import torch.nn as nn
-from models.tps import TPSGeometricTransform
+# switch to STN by deleting #
+# from models.stn import STNGeometricTransform
+#  class GeometricTransform(STNGeometricTransform):
+#    def __init__(self, channels, out_size=(256,256)):
+#        super().__init__(channels, out_size=out_size)
 
-# 这里以 TPS 变形模块为例，支持复杂非刚性几何变换
+from models.tps import TPSGeometricTransform
 class GeometricTransform(TPSGeometricTransform):
     def __init__(self, channels, num_ctrl_pts=16, out_size=(256,256)):
         super().__init__(channels, num_ctrl_pts=num_ctrl_pts, out_size=out_size)
+
 
 from models.cyclegan import ResnetGenerator, NLayerDiscriminator
 
@@ -31,4 +36,4 @@ class CycleGANMod(nn.Module):
         fake_A = self.G_BA(x_B)
         rec_B = self.G_AB(fake_A)
         return fake_B, rec_A, fake_A, rec_B
-# 损失函数在训练脚本中实现 shape consistency loss
+#  shape consistency loss

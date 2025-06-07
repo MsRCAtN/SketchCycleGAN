@@ -4,21 +4,19 @@ import datetime
 import argparse
 import torch
 import torch.nn as nn
-import torch.autograd as autograd
-import mlflow
-import mlflow.pytorch
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from torch.utils.data import DataLoader
 from torchvision import transforms, utils as vutils
-from models.cyclegan import CycleGAN
+from models.cyclegan_mod import CycleGANMod
 from datasets.sketch_photo_dataset import SketchPhotoDataset
 from tqdm import tqdm
 import time
 import random
+import mlflow
+import mlflow.pytorch
 
+# 
 BATCH_SIZE = 2
 EPOCHS = 20
-#  PyTorch，
 if torch.cuda.is_available():
     DEVICE = 'cuda'
 elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_built() and torch.backends.mps.is_available():
@@ -70,26 +68,8 @@ class ImagePool:
                     out.append(img)
         return torch.cat(out, dim=0)
 
-# --- WGAN-GP  ---
-def compute_gradient_penalty(D, real_samples, fake_samples, device):
-    alpha = torch.rand(real_samples.size(0), 1, 1, 1, device=device)
-    interpolates = (alpha * real_samples + (1 - alpha) * fake_samples).requires_grad_(True)
-    d_interpolates = D(interpolates)
-    fake = torch.ones_like(d_interpolates, device=device, requires_grad=False)
-    gradients = autograd.grad(
-        outputs=d_interpolates,
-        inputs=interpolates,
-        grad_outputs=fake,
-        create_graph=True,
-        retain_graph=True,
-        only_inputs=True
-    )[0]
-    gradients = gradients.view(gradients.size(0), -1)
-    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-    return gradient_penalty
-
 def main():
-    mlflow.set_experiment("CycleGAN-Original")
+    mlflow.set_experiment("CycleGAN-LSGAN")
     with mlflow.start_run():
         parser = argparse.ArgumentParser()
         parser.add_argument('--resume', type=str, default=None, help='output dir to resume from')
@@ -103,68 +83,42 @@ def main():
         mlflow.log_param("batch_size", BATCH_SIZE)
         mlflow.log_param("num_workers", NUM_WORKERS)
         mlflow.log_param("epochs", EPOCHS)
-        mlflow.log_param("model", "CycleGAN-Original")
-        # output dir for orig cyclegan
-        model_tag = 'cyclegan_orig'
+        mlflow.log_param("model", "CycleGAN-LSGAN")
+        # resume 
         if opt.resume:
             OUTPUT_DIR = opt.resume
             if not os.path.isdir(OUTPUT_DIR):
                 print(f"Resume directory {OUTPUT_DIR} does not exist.")
                 sys.exit(1)
-            LOG_FILE = os.path.join(OUTPUT_DIR, 'train_log.txt')
-            CHECKPOINT = os.path.join(OUTPUT_DIR, 'cyclegan_orig.pth')
-            if not os.path.exists(CHECKPOINT):
-                print(f"Checkpoint {CHECKPOINT} does not exist in resume directory.")
-                sys.exit(1)
             RESUME_MODE = True
+            start_epoch = 0
         else:
-            RUN_TIMESTAMP = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-            OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'output', model_tag, RUN_TIMESTAMP)
+            OUTPUT_DIR = os.path.join('output', f'cyclegan_lsgan_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}')
             os.makedirs(OUTPUT_DIR, exist_ok=True)
-            LOG_FILE = os.path.join(OUTPUT_DIR, 'train_log.txt')
-            CHECKPOINT = os.path.join(OUTPUT_DIR, 'cyclegan_orig.pth')
             RESUME_MODE = False
-
-        #  sketch/photo set
-        sketch_sets = [
-            'tx_000000000000',
-            'tx_000000000010',
-            'tx_000000000110',
-            'tx_000000001010',
-            'tx_000000001110',
-            'tx_000100000000',
-        ]
-        photo_sets = [
-            'tx_000000000000',
-            'tx_000100000000',
-        ]
-        dataset = SketchPhotoDataset(
-            root_dir='Dataset',
-            paired=True,
-            transform=transform,
-            sketch_sets=sketch_sets,
-            photo_sets=photo_sets
-        )
-        dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
-
-        model = CycleGAN(input_nc=1, output_nc=3).to(DEVICE)
-        optimizer_G = torch.optim.Adam(list(model.G_AB.parameters()) + list(model.G_BA.parameters()), lr=0.0001, betas=(0.5, 0.999))
-        optimizer_D = torch.optim.Adam(list(model.D_A.parameters()) + list(model.D_B.parameters()), lr=0.0001, betas=(0.5, 0.999))
-        criterion_cycle = torch.nn.L1Loss()
-        criterion_identity = torch.nn.L1Loss()
-
-        fake_A_pool = ImagePool(50)
-        fake_B_pool = ImagePool(50)
-
-        start_epoch = 0
-        if RESUME_MODE:
+            start_epoch = 0
+        LOG_FILE = os.path.join(OUTPUT_DIR, 'train_log.txt')
+        CHECKPOINT = os.path.join(OUTPUT_DIR, 'cyclegan_lsgan.pth')
+        # 
+        dataset = SketchPhotoDataset(DATA_ROOT, paired=True, transform=transform)
+        dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS)
+        # 
+        model = CycleGANMod(input_nc=1, output_nc=3).to(DEVICE)
+        optimizer_G = torch.optim.Adam(list(model.G_AB.parameters()) + list(model.G_BA.parameters()), lr=0.0002, betas=(0.5, 0.999))
+        optimizer_D = torch.optim.Adam(list(model.D_A.parameters()) + list(model.D_B.parameters()), lr=0.0002, betas=(0.5, 0.999))
+        criterion_GAN = nn.MSELoss()
+        criterion_cycle = nn.L1Loss()
+        criterion_identity = nn.L1Loss()
+        fake_A_pool = ImagePool()
+        fake_B_pool = ImagePool()
+        # 
+        if opt.resume and os.path.exists(CHECKPOINT):
             checkpoint = torch.load(CHECKPOINT, map_location=DEVICE)
             model.load_state_dict(checkpoint['model'])
             optimizer_G.load_state_dict(checkpoint['optimizer_G'])
             optimizer_D.load_state_dict(checkpoint['optimizer_D'])
             start_epoch = checkpoint['epoch'] + 1
             print(f"Resumed from checkpoint at epoch {start_epoch} in {OUTPUT_DIR}")
-
         logf = open(LOG_FILE, 'a')
         loss_log_path = os.path.join(OUTPUT_DIR, 'train_loss_log.txt')
         monitor_log_path = os.path.join(OUTPUT_DIR, 'train_monitor_log.txt')
@@ -180,64 +134,44 @@ def main():
                     real_A = batch['sketch'].to(DEVICE)
                     real_B = batch['photo'].to(DEVICE)
                     fake_B, rec_A, fake_A, rec_B = model(real_A, real_B)
-
-                    # ========== 1.  loss（WGAN-GP） ==========
-                    loss_GAN_AB = -model.D_B(fake_B).mean()
-                    loss_GAN_BA = -model.D_A(fake_A).mean()
+                    # ========== 1.  loss（LSGAN） ==========
+                    valid = torch.ones_like(model.D_B(fake_B), device=DEVICE)
+                    fake = torch.zeros_like(model.D_B(fake_B), device=DEVICE)
+                    loss_GAN_AB = criterion_GAN(model.D_B(fake_B), valid)
+                    loss_GAN_BA = criterion_GAN(model.D_A(fake_A), valid)
                     loss_cycle_A = criterion_cycle(rec_A, real_A)
                     loss_cycle_B = criterion_cycle(rec_B, real_B)
                     # Identity loss
                     identity_A = model.G_BA(real_B)
                     identity_B = model.G_AB(real_A)
-                    identity_A, real_B_matched = match_channels(identity_A, real_B)
-                    identity_B, real_A_matched = match_channels(identity_B, real_A)
-                    loss_identity_A = criterion_identity(identity_A, real_B_matched)
-                    loss_identity_B = criterion_identity(identity_B, real_A_matched)
-                    lambda_id = 0.5
-                    loss_G = loss_GAN_AB + loss_GAN_BA + 20 * (loss_cycle_A + loss_cycle_B) + lambda_id * (loss_identity_A + loss_identity_B)
+                    loss_identity_A = criterion_identity(identity_A, real_A)
+                    loss_identity_B = criterion_identity(identity_B, real_B)
+                    # 
+                    loss_G = loss_GAN_AB + loss_GAN_BA + 10 * (loss_cycle_A + loss_cycle_B) + 5 * (loss_identity_A + loss_identity_B)
                     optimizer_G.zero_grad()
                     loss_G.backward()
                     optimizer_G.step()
-
-                    # ========== 2. （WGAN-GP） ==========
-                    n_D_steps = 3
-                    lambda_gp = 10
-                    for _ in range(n_D_steps):
-                        # A
-                        real_validity_A = model.D_A(real_A)
-                        fake_A_buffer = fake_A_pool.query(fake_A.detach())
-                        fake_validity_A = model.D_A(fake_A_buffer)
-                        gp_A = compute_gradient_penalty(model.D_A, real_A, fake_A_buffer, DEVICE)
-                        loss_D_A = fake_validity_A.mean() - real_validity_A.mean() + lambda_gp * gp_A
-                        optimizer_D.zero_grad()
-                        loss_D_A.backward(retain_graph=True)
-                        optimizer_D.step()
-                        # B
-                        real_validity_B = model.D_B(real_B)
-                        fake_B_buffer = fake_B_pool.query(fake_B.detach())
-                        fake_validity_B = model.D_B(fake_B_buffer)
-                        gp_B = compute_gradient_penalty(model.D_B, real_B, fake_B_buffer, DEVICE)
-                        loss_D_B = fake_validity_B.mean() - real_validity_B.mean() + lambda_gp * gp_B
-                        optimizer_D.zero_grad()
-                        loss_D_B.backward(retain_graph=True)
-                        optimizer_D.step()
+                    # ========== 2.  loss（LSGAN） ==========
+                    # A
+                    fake_A_buffer = fake_A_pool.query(fake_A.detach())
+                    loss_D_A_real = criterion_GAN(model.D_A(real_A), valid)
+                    loss_D_A_fake = criterion_GAN(model.D_A(fake_A_buffer), fake)
+                    loss_D_A = (loss_D_A_real + loss_D_A_fake) * 0.5
+                    # B
+                    fake_B_buffer = fake_B_pool.query(fake_B.detach())
+                    loss_D_B_real = criterion_GAN(model.D_B(real_B), valid)
+                    loss_D_B_fake = criterion_GAN(model.D_B(fake_B_buffer), fake)
+                    loss_D_B = (loss_D_B_real + loss_D_B_fake) * 0.5
                     loss_D = loss_D_A + loss_D_B
+                    optimizer_D.zero_grad()
+                    loss_D.backward()
+                    optimizer_D.step()
+                    # tqdm
                     pbar.set_postfix({
-                        'Loss_G': f"{loss_G.item():.4f}",
-                        'Loss_D': f"{loss_D.item():.4f}"
+                        'loss_G': loss_G.item(),
+                        'loss_D': loss_D.item()
                     })
                     # 
-                    with torch.no_grad():
-                        mean_fakeB = fake_B.mean().item()
-                        std_fakeB = fake_B.std().item()
-                        mean_fakeA = fake_A.mean().item()
-                        std_fakeA = fake_A.std().item()
-                        if std_fakeB < 0.05 or std_fakeA < 0.05:
-                            print(f"[Warning] Possible mode collapse detected! std_fakeB: {std_fakeB:.4f}, std_fakeA: {std_fakeA:.4f}")
-                            logf.write(f"[Warning][Epoch {epoch+1}][Batch {i+1}] std_fakeB: {std_fakeB:.4f}, std_fakeA: {std_fakeA:.4f}\n")
-                        monitor_msg = f"[Epoch {epoch+1}][Batch {i+1}] mean_fakeB: {mean_fakeB:.4f}, std_fakeB: {std_fakeB:.4f}, mean_fakeA: {mean_fakeA:.4f}, std_fakeA: {std_fakeA:.4f}\n"
-                        monitor_logf.write(monitor_msg)
-                        monitor_logf.flush()
                     if (i+1) % 100 == 0:
                         mlflow.log_metric("loss_G", loss_G.item(), step=epoch*len(dataloader)+i)
                         mlflow.log_metric("loss_D", loss_D.item(), step=epoch*len(dataloader)+i)
@@ -245,24 +179,16 @@ def main():
                         msg = f"[Epoch {epoch+1}] [Batch {i+1}/{len(dataloader)}] Loss_G: {loss_G.item():.4f} Loss_D: {loss_D.item():.4f}\n"
                         loss_logf.write(msg)
                         loss_logf.flush()
+                    def to3c(x):
+                        return x if x.shape[1] == 3 else x.repeat(1, 3, 1, 1)
                     if i % 200 == 0:
-                        def to3c(x):
-                            return x if x.shape[1] == 3 else x.repeat(1, 3, 1, 1)
-                        # ，
                         grid = torch.cat([
                             to3c(real_A[:4]), to3c(fake_B[:4]), to3c(real_B[:4]), to3c(fake_A[:4])
                         ], dim=0)
                         save_image(grid, os.path.join(OUTPUT_DIR, f'pair_epoch{epoch}_batch{i}.png'), nrow=4)
-                # 
                 sample_path = os.path.join(OUTPUT_DIR, f"sample_epoch{epoch+1}.png")
                 if os.path.exists(sample_path):
                     mlflow.log_artifact(sample_path, artifact_path="samples")
-                # 
-                if (epoch+1) % 5 == 0 or (epoch+1)==EPOCHS:
-                    mlflow.pytorch.log_model(model.G_AB, f"generator_AB_epoch{epoch+1}")
-                    mlflow.pytorch.log_model(model.D_A, f"discriminator_A_epoch{epoch+1}")
-                    mlflow.pytorch.log_model(model.G_BA, f"generator_BA_epoch{epoch+1}")
-                    mlflow.pytorch.log_model(model.D_B, f"discriminator_B_epoch{epoch+1}")
                 torch.save({
                     'model': model.state_dict(),
                     'optimizer_G': optimizer_G.state_dict(),
@@ -273,6 +199,11 @@ def main():
                 logf.write(f"Checkpoint saved to {CHECKPOINT}\n")
                 logf.flush()
                 print(f"Epoch time: {time.time()-epoch_start:.1f}s")
+                if (epoch+1) % 5 == 0 or (epoch+1)==EPOCHS:
+                    mlflow.pytorch.log_model(model.G_AB, f"generator_AB_epoch{epoch+1}")
+                    mlflow.pytorch.log_model(model.D_A, f"discriminator_A_epoch{epoch+1}")
+                    mlflow.pytorch.log_model(model.G_BA, f"generator_BA_epoch{epoch+1}")
+                    mlflow.pytorch.log_model(model.D_B, f"discriminator_B_epoch{epoch+1}")
         except KeyboardInterrupt:
             print("KeyboardInterrupt: Saving checkpoint before exit...")
             torch.save({

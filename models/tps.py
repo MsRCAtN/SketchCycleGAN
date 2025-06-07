@@ -61,12 +61,12 @@ class TPSGeometricTransform(nn.Module):
             nn.AdaptiveAvgPool2d(1)
         )
         self.fc = nn.Linear(8, num_ctrl_pts * 2)
-        # 初始化控制点为均匀分布
+        # 
         ctrl_pts = self._build_ctrl_pts(num_ctrl_pts)
         self.fc.weight.data.zero_()
         self.fc.bias.data.copy_(ctrl_pts.view(-1))
     def _build_ctrl_pts(self, num_pts):
-        # 均匀分布在[-1,1]范围内
+        # [-1,1]
         import math
         grid_size = int(math.sqrt(num_pts))
         x = torch.linspace(-1, 1, grid_size)

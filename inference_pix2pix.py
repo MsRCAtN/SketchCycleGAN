@@ -11,35 +11,48 @@ from models.pix2pix import Pix2Pix
 
 def main():
     parser = argparse.ArgumentParser(description="Pix2Pix Inference Script")
-    parser.add_argument('--weights', type=str, default='output/pix2pix/latest.pth', help='Path to model weights (.pth file)')
-    parser.add_argument('--input', type=str, default='input.png', help='Path to input image')
-    parser.add_argument('--output', type=str, default='output.png', help='Path to save output image')
+    parser.add_argument('--weights', type=str, required=True, help='Path to model weights (.pth file)')
+    parser.add_argument('--input', type=str, required=True, help='Path to input image')
+    parser.add_argument('--output', type=str, required=True, help='Path to save output image')
     parser.add_argument('--size', type=int, default=256, help='Image size (default: 256)')
-    parser.add_argument('--cuda', action='store_true', help='Use CUDA if available')
+    parser.add_argument('--device', type=str, default=None, help='Device to use: cpu, cuda, mps, or auto for auto-detection.')
     args = parser.parse_args()
 
-    device = torch.device('cuda' if args.cuda and torch.cuda.is_available() else 'cpu')
+    # Determine device (cuda, mps, cpu)
+    if args.device is not None:
+        device = torch.device(args.device)
+    else:
+        if torch.cuda.is_available():
+            device = torch.device('cuda')
+        elif getattr(torch, 'has_mps', False) and torch.backends.mps.is_available():
+            device = torch.device('mps')
+        else:
+            device = torch.device('cpu')
+    print(f"Using device: {device}")
 
     # Load model
     model = Pix2Pix()
-    state_dict = torch.load(args.weights, map_location=device)
+    state = torch.load(args.weights, map_location=device)
+    if isinstance(state, dict) and 'model' in state:
+        state_dict = state['model']
+    else:
+        state_dict = state
     model.load_state_dict(state_dict)
     model.to(device)
     model.eval()
 
-    # Preprocess input
+    # Load and preprocess input image (ensure grayscale)
+    img = Image.open(args.input).convert('L')  # Convert to grayscale
     transform = transforms.Compose([
         transforms.Resize((args.size, args.size)),
         transforms.ToTensor(),
-        # Uncomment if training used normalization
-        # transforms.Normalize((0.5,), (0.5,))
+        transforms.Normalize((0.5,), (0.5,))  # Normalize to [-1, 1] as Pix2Pix expects
     ])
-    img = Image.open(args.input).convert('RGB')
     input_tensor = transform(img).unsqueeze(0).to(device)
 
     # Inference
     with torch.no_grad():
-        output = model(input_tensor)
+        output = model.generator(input_tensor)
         # If output is in [-1,1], map to [0,1]
         output_img = (output.squeeze(0).detach().cpu() + 1) / 2
         save_image(output_img, args.output)
